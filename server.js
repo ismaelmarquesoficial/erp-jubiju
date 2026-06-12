@@ -265,7 +265,9 @@ async function runImport() {
   let simpleBatch = [];
   let variationBatch = [];
   let kitBatch = [];
-  const BATCH_SIZE = 5; // Enviar em lotes de 5
+  // 1 = grava cada produto no .jsonl imediatamente (flush por produto).
+  // Assim o export fica sempre completo e nada se perde se o container reiniciar.
+  const BATCH_SIZE = 1;
 
   try {
     while (hasMore && importRunning) {
