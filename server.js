@@ -5,8 +5,10 @@ const blingAuth = require('./services/bling-auth');
 const blingProducts = require('./services/bling-products');
 const googleWebhook = require('./services/google-webhook');
 const imageHandler = require('./services/image-handler');
+const upsellerXlsx = require('./services/upseller-xlsx');
 const logger = require('./utils/logger');
 const progress = require('./utils/progress');
+const rowstore = require('./utils/rowstore');
 
 const app = express();
 app.use(express.json());
@@ -139,6 +141,7 @@ app.post('/api/import/start', async (req, res) => {
 
   if (shouldReset) {
     progress.reset();
+    rowstore.clear();
     logger.info('Progresso resetado. Iniciando do zero.');
   }
 
@@ -190,8 +193,45 @@ app.post('/api/import/reset', (req, res) => {
     return res.json({ error: 'Para a importacao antes de resetar' });
   }
   progress.reset();
+  rowstore.clear();
   logger.info('Progresso resetado');
   res.json({ status: 'reset' });
+});
+
+// ===================== EXPORTACAO XLSX UPSELLER =====================
+
+app.post('/api/export/xlsx', async (req, res) => {
+  try {
+    const outDir = path.join(__dirname, 'public', 'exports');
+    const jobs = [
+      { type: 'simple', base: 'UpSeller_Unico' },
+      { type: 'variation', base: 'UpSeller_Variante' }
+    ];
+
+    const files = [];
+    for (const job of jobs) {
+      const rows = rowstore.read(job.type);
+      if (rows.length === 0) continue;
+      logger.info(`Gerando ${job.base} (${rows.length} linhas)...`);
+      const gen = await upsellerXlsx.generate(job.type, rows, outDir, job.base);
+      for (const g of gen) files.push({ ...g, type: job.type, url: `/exports/${encodeURIComponent(g.file)}` });
+    }
+
+    const kitCount = rowstore.count('kit');
+    if (kitCount > 0) {
+      logger.warning(`${kitCount} linha(s) de KIT nao exportadas: falta o template "Produtos KIT" da UpSeller.`);
+    }
+
+    if (files.length === 0) {
+      return res.json({ status: 'empty', message: 'Nenhuma linha para exportar. Rode a importacao primeiro.' });
+    }
+
+    logger.success(`Planilhas UpSeller geradas: ${files.map(f => f.file).join(', ')}`);
+    res.json({ status: 'ok', files, kitPendente: kitCount });
+  } catch (err) {
+    logger.error(`Erro ao gerar xlsx: ${err.message}`);
+    res.json({ status: 'error', error: err.message });
+  }
 });
 
 // ===================== SSE LOGS =====================
@@ -404,18 +444,14 @@ async function runImport() {
   }
 }
 
-async function sendBatch(type, rows) {
-  if (!process.env.GOOGLE_WEBHOOK_URL) {
-    logger.warning('Webhook Google nao configurado. Dados nao enviados para Sheets.');
-    return;
-  }
-
+// Grava o lote de linhas em disco (.jsonl). A geracao do .xlsx da UpSeller e feita
+// depois, sob demanda, em POST /api/export/xlsx.
+function sendBatch(type, rows) {
   try {
-    await googleWebhook.sendToSheets(type, rows);
+    rowstore.append(type, rows);
     progress.update({ stats: { sheetsSent: progress.load().stats.sheetsSent + rows.length } });
   } catch (err) {
-    logger.error(`Falha ao enviar lote ${type} para Sheets: ${err.message}`);
-    // Nao relanca - continua a importacao
+    logger.error(`Falha ao gravar lote ${type}: ${err.message}`);
   }
 }
 

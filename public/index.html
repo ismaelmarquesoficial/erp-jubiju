@@ -359,8 +359,11 @@
     <button class="btn warning" id="btnPause" onclick="pauseImport()" disabled>Pausar</button>
     <button class="btn primary" id="btnResume" onclick="resumeImport()" disabled>Retomar</button>
     <button class="btn danger" id="btnReset" onclick="resetImport()">Resetar</button>
+    <button class="btn primary" id="btnExport" onclick="exportXlsx()">Gerar Planilhas UpSeller</button>
     <button class="btn" onclick="window.location.href='/auth/bling'">Autenticar Bling</button>
   </div>
+
+  <div id="exportResult" style="margin-bottom:20px;"></div>
 
   <!-- Logs + Errors -->
   <div class="two-col">
@@ -597,6 +600,34 @@
     if (!confirm('Resetar todo o progresso? Isso vai recomecar do zero.')) return;
     await fetch('/api/import/reset', { method: 'POST' });
     fetchStatus();
+  }
+
+  async function exportXlsx() {
+    const btn = document.getElementById('btnExport');
+    const box = document.getElementById('exportResult');
+    btn.disabled = true; btn.textContent = 'Gerando...';
+    box.innerHTML = '';
+    try {
+      const res = await fetch('/api/export/xlsx', { method: 'POST' });
+      const data = await res.json();
+      if (data.status === 'ok') {
+        let html = '<div class="card"><h3>Planilhas UpSeller geradas</h3>';
+        for (const f of data.files) {
+          const modelo = f.type === 'simple' ? 'Único' : 'Variante';
+          html += `<div style="margin-top:8px"><a class="btn primary" href="${f.url}" download>⬇ ${f.file}</a> <span class="sub">${f.rows} linhas (${modelo})</span></div>`;
+        }
+        if (data.kitPendente) html += `<div class="sub" style="color:#d29922;margin-top:10px">${data.kitPendente} linha(s) de KIT não exportadas (falta o template KIT da UpSeller).</div>`;
+        html += '</div>';
+        box.innerHTML = html;
+      } else if (data.status === 'empty') {
+        box.innerHTML = `<div class="card"><span class="sub">${data.message}</span></div>`;
+      } else {
+        box.innerHTML = `<div class="card"><span class="sub" style="color:#f85149">Erro: ${data.error || 'desconhecido'}</span></div>`;
+      }
+    } catch (e) {
+      box.innerHTML = `<div class="card"><span class="sub" style="color:#f85149">Falha: ${e.message}</span></div>`;
+    }
+    btn.disabled = false; btn.textContent = 'Gerar Planilhas UpSeller';
   }
 
   function clearLogs() {

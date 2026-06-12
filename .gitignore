@@ -11,3 +11,9 @@ data/*.json
 *.xlsx
 planilhas produtos bling/
 planilhas upseller/
+public/exports/
+secrets.local.json
+*.local.json
+# excecao: os templates da UpSeller PRECISAM ir pro repo (o servidor usa para gerar)
+!templates/upseller/
+!templates/upseller/*.xlsx
