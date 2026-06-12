@@ -197,8 +197,8 @@ app.post('/api/shopify/sync-batch', (req, res) => {
   const opts = {
     status: b.status || null,                       // null = segue o ativo da BW
     update: !!b.update,                             // true = atualiza se ja existir
-    sleepMs: b.sleepMs || 450,                      // throttle entre produtos
-    pausaEntreLotesMs: b.pausaEntreLotesMs || 4000, // pausa entre paginas/lotes
+    sleepMs: b.sleepMs || 600,                      // throttle entre produtos
+    pausaEntreLotesMs: b.pausaEntreLotesMs || 5000, // pausa entre paginas/lotes
     reset: !!b.reset
   };
   shopifySyncRunning = true; shopifySyncPaused = false;
@@ -583,26 +583,38 @@ async function runShopifySync(opts) {
         if (!shopifySyncRunning) break;
         while (shopifySyncPaused && shopifySyncRunning) await blingProducts.sleep(1000);
         if (synced.has(product.id)) continue;
-        try {
-          const details = await blingProducts.fetchProductDetails(product.id);
-          await blingProducts.sleep(300);
-          const codigoPai = details.codigoPai
-            || (details.estrutura && details.estrutura.pai && details.estrutura.pai.id)
-            || (details.variacao && details.variacao.produtoPai && details.variacao.produtoPai.id)
-            || product.idProdutoPai || null;
-          if (codigoPai) { synced.add(product.id); continue; } // variacao-filha: processada pelo pai
-          const processed = blingProducts.processProduct(product, details);
-          if (processed.kit) { sp.stats.kit = (sp.stats.kit || 0) + 1; synced.add(product.id); continue; }
-          const descricao = details.descricaoComplementar || details.descricaoCurta || details.descricao || '';
-          const r = await shopifyProducts.upsertProduct(processed, { descricao, status: opts.status, update: opts.update });
-          if (r.skipped) sp.stats.skipped++; else sp.stats.created++;
-          synced.add(product.id); nesteRun++;
-        } catch (e) {
-          sp.stats.errors++;
-          (sp.errors = sp.errors || []).push({ id: product.id, msg: e.message });
-          if (sp.errors.length > 200) sp.errors = sp.errors.slice(-200);
-          logger.error(`Sync lote erro produto ${product.id}: ${e.message}`);
-          if (e.response && e.response.status === 429) { logger.warning('Shopify 429: aguardando 15s'); await blingProducts.sleep(15000); }
+
+        let tentativa = 0, resolvido = false;
+        while (!resolvido && tentativa < 4 && shopifySyncRunning) {
+          tentativa++;
+          try {
+            const details = await blingProducts.fetchProductDetails(product.id);
+            await blingProducts.sleep(300);
+            const codigoPai = details.codigoPai
+              || (details.estrutura && details.estrutura.pai && details.estrutura.pai.id)
+              || (details.variacao && details.variacao.produtoPai && details.variacao.produtoPai.id)
+              || product.idProdutoPai || null;
+            if (codigoPai) { synced.add(product.id); resolvido = true; break; } // variacao-filha: processada pelo pai
+            const processed = blingProducts.processProduct(product, details);
+            if (processed.kit) { sp.stats.kit = (sp.stats.kit || 0) + 1; synced.add(product.id); resolvido = true; break; }
+            const descricao = details.descricaoComplementar || details.descricaoCurta || details.descricao || '';
+            const r = await shopifyProducts.upsertProduct(processed, { descricao, status: opts.status, update: opts.update });
+            if (r.skipped) sp.stats.skipped++; else sp.stats.created++;
+            synced.add(product.id); nesteRun++; resolvido = true;
+          } catch (e) {
+            const is429 = (e.response && e.response.status === 429) || /429/.test(e.message || '');
+            if (is429 && tentativa < 4) {
+              const espera = tentativa * 20000; // 20s, 40s, 60s
+              logger.warning(`429 no produto ${product.id} (tentativa ${tentativa}/4) - aguardando ${espera / 1000}s`);
+              await blingProducts.sleep(espera);
+            } else {
+              sp.stats.errors++;
+              (sp.errors = sp.errors || []).push({ id: product.id, msg: e.message });
+              if (sp.errors.length > 200) sp.errors = sp.errors.slice(-200);
+              logger.error(`Sync lote erro produto ${product.id}: ${e.message}`);
+              resolvido = true; // desiste deste produto (sera reprocessado num novo passe)
+            }
+          }
         }
         sp.syncedIds = Array.from(synced);
         saveSyncProg(sp);
