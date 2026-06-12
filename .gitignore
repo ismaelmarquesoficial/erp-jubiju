@@ -1,0 +1,13 @@
+node_modules/
+.env
+data/tokens.json
+data/progress.json
+config/google-credentials.json
+public/imagens/
+data/*.json
+*.zip
+.claude/
+*.xls
+*.xlsx
+planilhas produtos bling/
+planilhas upseller/

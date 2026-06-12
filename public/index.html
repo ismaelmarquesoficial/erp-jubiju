@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ERP-JU | Importador Bling</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #0f1117;
+      color: #e1e4e8;
+      min-height: 100vh;
+    }
+
+    .header {
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #58a6ff;
+    }
+    .header .status-dots {
+      display: flex;
+      gap: 16px;
+    }
+    .status-dot {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #484f58;
+    }
+    .dot.ok { background: #3fb950; }
+    .dot.error { background: #f85149; }
+    .dot.warn { background: #d29922; }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .card h3 {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: #8b949e;
+      margin-bottom: 8px;
+      letter-spacing: 0.5px;
+    }
+    .card .value {
+      font-size: 28px;
+      font-weight: 700;
+      color: #e1e4e8;
+    }
+    .card .sub {
+      font-size: 12px;
+      color: #8b949e;
+      margin-top: 4px;
+    }
+
+    .alerts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .alert-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .alert-card.warning { border-color: #d29922; }
+    .alert-card.danger { border-color: #f85149; }
+    .alert-card h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .alert-card.warning h3 { color: #d29922; }
+    .alert-card.danger h3 { color: #f85149; }
+    .alert-card .count {
+      font-size: 32px;
+      font-weight: 700;
+    }
+    .alert-card.warning .count { color: #d29922; }
+    .alert-card.danger .count { color: #f85149; }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .btn {
+      padding: 10px 20px;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      background: #21262d;
+      color: #e1e4e8;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .btn:hover { background: #30363d; }
+    .btn.primary {
+      background: #238636;
+      border-color: #2ea043;
+      color: #fff;
+    }
+    .btn.primary:hover { background: #2ea043; }
+    .btn.warning {
+      background: #9e6a03;
+      border-color: #d29922;
+      color: #fff;
+    }
+    .btn.danger {
+      background: #da3633;
+      border-color: #f85149;
+      color: #fff;
+    }
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .progress-bar {
+      background: #21262d;
+      border-radius: 4px;
+      height: 8px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .progress-bar .fill {
+      height: 100%;
+      background: linear-gradient(90deg, #238636, #3fb950);
+      border-radius: 4px;
+      transition: width 0.3s;
+      width: 0%;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .log-panel {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      height: 450px;
+      display: flex;
+      flex-direction: column;
+    }
+    .log-panel .panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid #30363d;
+      font-weight: 600;
+      font-size: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #161b22;
+      border-radius: 8px 8px 0 0;
+    }
+    .log-entries {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .log-entry {
+      padding: 2px 8px;
+      border-radius: 3px;
+    }
+    .log-entry:hover { background: #161b22; }
+    .log-entry .time { color: #484f58; margin-right: 8px; }
+    .log-entry.info .msg { color: #8b949e; }
+    .log-entry.success .msg { color: #3fb950; }
+    .log-entry.error .msg { color: #f85149; }
+    .log-entry.warning .msg { color: #d29922; }
+    .log-entry.progress .msg { color: #58a6ff; }
+
+    .product-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .product-table th {
+      text-align: left;
+      padding: 8px 12px;
+      font-size: 12px;
+      text-transform: uppercase;
+      color: #8b949e;
+      border-bottom: 1px solid #30363d;
+      position: sticky;
+      top: 0;
+      background: #161b22;
+    }
+    .product-table td {
+      padding: 6px 12px;
+      font-size: 13px;
+      border-bottom: 1px solid #21262d;
+    }
+    .product-table tr:hover td { background: #161b22; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge.simple { background: #0d419d; color: #a5d6ff; }
+    .badge.variation { background: #3d1e6d; color: #d2a8ff; }
+    .badge.error-badge { background: #490202; color: #ff7b72; }
+
+    .filter-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .filter-tab {
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      cursor: pointer;
+      background: #21262d;
+      color: #8b949e;
+      border: 1px solid #30363d;
+    }
+    .filter-tab.active {
+      background: #388bfd26;
+      color: #58a6ff;
+      border-color: #388bfd;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #484f58;
+    }
+
+    .clear-btn {
+      font-size: 11px;
+      padding: 4px 10px;
+      background: transparent;
+      border: 1px solid #30363d;
+      color: #8b949e;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr 1fr; }
+      .two-col { grid-template-columns: 1fr; }
+      .alerts-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>ERP-JU | Importador Bling &rarr; Sheets</h1>
+  <div class="status-dots">
+    <div class="status-dot">
+      <div class="dot" id="dotBling"></div>
+      <span id="statusBling">Bling: ---</span>
+    </div>
+    <div class="status-dot">
+      <div class="dot" id="dotSheets"></div>
+      <span id="statusSheets">Sheets: ---</span>
+    </div>
+    <div class="status-dot">
+      <div class="dot" id="dotSSE"></div>
+      <span id="statusSSE">Live: ---</span>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Stats Cards -->
+  <div class="grid">
+    <div class="card">
+      <h3>Total Processados</h3>
+      <div class="value" id="statProcessed">0</div>
+      <div class="sub" id="statTotal">de 0 produtos</div>
+    </div>
+    <div class="card">
+      <h3>Produtos Simples</h3>
+      <div class="value" id="statSimple">0</div>
+      <div class="sub">sem variacoes</div>
+    </div>
+    <div class="card">
+      <h3>Com Variacao</h3>
+      <div class="value" id="statVariation">0</div>
+      <div class="sub">variantes</div>
+    </div>
+    <div class="card">
+      <h3>Enviados p/ Sheets</h3>
+      <div class="value" id="statSheets">0</div>
+      <div class="sub">linhas exportadas</div>
+    </div>
+  </div>
+
+  <!-- Progress Bar -->
+  <div class="progress-bar">
+    <div class="fill" id="progressFill"></div>
+  </div>
+
+  <!-- Alerts -->
+  <div class="alerts-grid">
+    <div class="alert-card warning">
+      <h3>Sem Preco de Venda</h3>
+      <div class="count" id="alertNoPrice">0</div>
+      <div class="sub" style="color:#8b949e;margin-top:4px">preco definido como R$ 0,01</div>
+    </div>
+    <div class="alert-card danger">
+      <h3>SKU sem Info do Pai</h3>
+      <div class="count" id="alertNoParent">0</div>
+      <div class="sub" style="color:#8b949e;margin-top:4px">variantes sem referencia do produto-pai</div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button class="btn primary" id="btnStart" onclick="startImport()">Iniciar Importacao</button>
+    <button class="btn warning" id="btnPause" onclick="pauseImport()" disabled>Pausar</button>
+    <button class="btn primary" id="btnResume" onclick="resumeImport()" disabled>Retomar</button>
+    <button class="btn danger" id="btnReset" onclick="resetImport()">Resetar</button>
+    <button class="btn" onclick="window.location.href='/auth/bling'">Autenticar Bling</button>
+  </div>
+
+  <!-- Logs + Errors -->
+  <div class="two-col">
+    <div class="log-panel">
+      <div class="panel-header">
+        <span>Logs em Tempo Real</span>
+        <button class="clear-btn" onclick="clearLogs()">Limpar</button>
+      </div>
+      <div class="log-entries" id="logEntries">
+        <div class="empty-state">Aguardando conexao...</div>
+      </div>
+    </div>
+
+    <div class="log-panel">
+      <div class="panel-header">
+        <span>Erros (<span id="errorCount">0</span>)</span>
+        <button class="clear-btn" onclick="clearErrors()">Limpar</button>
+      </div>
+      <div class="log-entries" id="errorEntries">
+        <div class="empty-state">Nenhum erro</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Products Table -->
+  <div class="log-panel" style="height: 400px; margin-top: 16px;">
+    <div class="panel-header">
+      <span>Produtos Processados</span>
+      <div class="filter-tabs">
+        <div class="filter-tab active" onclick="filterProducts('all', this)">Todos</div>
+        <div class="filter-tab" onclick="filterProducts('simple', this)">Simples</div>
+        <div class="filter-tab" onclick="filterProducts('variation', this)">Variacoes</div>
+        <div class="filter-tab" onclick="filterProducts('error', this)">Erros</div>
+      </div>
+    </div>
+    <div class="log-entries" id="productList" style="padding: 0;">
+      <table class="product-table">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Nome</th>
+            <th>Tipo</th>
+            <th>Preco</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="productTableBody">
+          <tr><td colspan="5" class="empty-state">Nenhum produto processado</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  let logs = [];
+  let errors = [];
+  let products = [];
+  let currentFilter = 'all';
+  let eventSource = null;
+
+  // ============ SSE ============
+  function connectSSE() {
+    if (eventSource) eventSource.close();
+
+    eventSource = new EventSource('/api/logs');
+
+    eventSource.onopen = () => {
+      document.getElementById('dotSSE').className = 'dot ok';
+      document.getElementById('statusSSE').textContent = 'Live: Conectado';
+    };
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        handleLogEntry(data);
+      } catch (e) {}
+    };
+
+    eventSource.onerror = () => {
+      document.getElementById('dotSSE').className = 'dot error';
+      document.getElementById('statusSSE').textContent = 'Live: Desconectado';
+      setTimeout(connectSSE, 3000);
+    };
+  }
+
+  function handleLogEntry(entry) {
+    // Adicionar ao log
+    logs.push(entry);
+    if (logs.length > 500) logs.shift();
+    renderLog(entry);
+
+    // Se erro, adicionar ao painel de erros
+    if (entry.type === 'error') {
+      errors.push(entry);
+      renderError(entry);
+    }
+
+    // Se e sobre produto, adicionar a tabela
+    if (entry.message && entry.message.includes('Produto processado:')) {
+      const name = entry.message.replace('Produto processado: ', '');
+      products.push({
+        sku: entry.sku || '---',
+        name: name,
+        type: 'success',
+        price: '',
+        badge: 'simple'
+      });
+    }
+  }
+
+  function renderLog(entry) {
+    const container = document.getElementById('logEntries');
+    if (container.querySelector('.empty-state')) {
+      container.innerHTML = '';
+    }
+
+    const div = document.createElement('div');
+    div.className = `log-entry ${entry.type}`;
+    const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '';
+    div.innerHTML = `<span class="time">${time}</span><span class="msg">${escapeHtml(entry.message)}</span>`;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function renderError(entry) {
+    const container = document.getElementById('errorEntries');
+    if (container.querySelector('.empty-state')) {
+      container.innerHTML = '';
+    }
+
+    const div = document.createElement('div');
+    div.className = 'log-entry error';
+    const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '';
+    div.innerHTML = `<span class="time">${time}</span><span class="msg">${escapeHtml(entry.message)}</span>`;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+
+    document.getElementById('errorCount').textContent = errors.length;
+  }
+
+  // ============ STATUS ============
+  async function fetchStatus() {
+    try {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+
+      // Bling status
+      const dotBling = document.getElementById('dotBling');
+      const statusBling = document.getElementById('statusBling');
+      if (data.bling.authenticated) {
+        dotBling.className = 'dot ok';
+        statusBling.textContent = 'Bling: Conectado';
+      } else {
+        dotBling.className = 'dot error';
+        statusBling.textContent = 'Bling: Nao autenticado';
+      }
+
+      // Sheets status
+      const dotSheets = document.getElementById('dotSheets');
+      const statusSheets = document.getElementById('statusSheets');
+      if (data.sheets.connected) {
+        dotSheets.className = 'dot ok';
+        statusSheets.textContent = 'Sheets: Conectado';
+      } else if (data.sheets.webhookConfigured) {
+        dotSheets.className = 'dot warn';
+        statusSheets.textContent = 'Sheets: Erro';
+      } else {
+        dotSheets.className = 'dot error';
+        statusSheets.textContent = 'Sheets: Nao configurado';
+      }
+
+      // Progress
+      if (data.import && data.import.progress) {
+        updateStats(data.import.progress);
+      }
+
+      // Buttons
+      updateButtons(data.import.running, data.import.paused);
+
+    } catch (e) {
+      console.error('Erro ao buscar status:', e);
+    }
+  }
+
+  function updateStats(prog) {
+    const s = prog.stats || {};
+    document.getElementById('statProcessed').textContent = s.processed || 0;
+    document.getElementById('statTotal').textContent = `de ${s.total || '?'} produtos`;
+    document.getElementById('statSimple').textContent = s.simple || 0;
+    document.getElementById('statVariation').textContent = s.variation || 0;
+    document.getElementById('statSheets').textContent = s.sheetsSent || 0;
+    document.getElementById('alertNoPrice').textContent = s.noPrice || 0;
+    document.getElementById('alertNoParent').textContent = s.noParentSku || 0;
+
+    // Progress bar
+    if (s.total > 0) {
+      const pct = Math.round((s.processed / s.total) * 100);
+      document.getElementById('progressFill').style.width = pct + '%';
+    }
+  }
+
+  function updateButtons(running, paused) {
+    document.getElementById('btnStart').disabled = running;
+    document.getElementById('btnPause').disabled = !running || paused;
+    document.getElementById('btnResume').disabled = !paused && !(!running && hasProgress());
+    document.getElementById('btnReset').disabled = running;
+  }
+
+  function hasProgress() {
+    const p = document.getElementById('statProcessed').textContent;
+    return parseInt(p) > 0;
+  }
+
+  // ============ ACTIONS ============
+  async function startImport() {
+    if (!confirm('Iniciar importacao de produtos do Bling?')) return;
+    await fetch('/api/import/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
+    fetchStatus();
+  }
+
+  async function pauseImport() {
+    await fetch('/api/import/pause', { method: 'POST' });
+    fetchStatus();
+  }
+
+  async function resumeImport() {
+    await fetch('/api/import/resume', { method: 'POST' });
+    fetchStatus();
+  }
+
+  async function resetImport() {
+    if (!confirm('Resetar todo o progresso? Isso vai recomecar do zero.')) return;
+    await fetch('/api/import/reset', { method: 'POST' });
+    fetchStatus();
+  }
+
+  function clearLogs() {
+    logs = [];
+    document.getElementById('logEntries').innerHTML = '<div class="empty-state">Logs limpos</div>';
+  }
+
+  function clearErrors() {
+    errors = [];
+    document.getElementById('errorEntries').innerHTML = '<div class="empty-state">Nenhum erro</div>';
+    document.getElementById('errorCount').textContent = '0';
+  }
+
+  function filterProducts(type, el) {
+    currentFilter = type;
+    document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+    if (el) el.classList.add('active');
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  // ============ INIT ============
+  connectSSE();
+  fetchStatus();
+  setInterval(fetchStatus, 5000);
+
+  // Check URL params
+  if (window.location.search.includes('auth=success')) {
+    alert('Bling autenticado com sucesso!');
+    history.replaceState({}, '', '/');
+  }
+</script>
+
+</body>
+</html>
