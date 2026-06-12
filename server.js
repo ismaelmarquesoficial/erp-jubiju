@@ -186,6 +186,33 @@ app.post('/api/shopify/sync/:blingId', async (req, res) => {
   }
 });
 
+// ===== SYNC EM LOTE (Bling -> Shopify) — lotes de 100, throttle + pausa entre lotes =====
+let shopifySyncRunning = false;
+let shopifySyncPaused = false;
+
+app.post('/api/shopify/sync-batch', (req, res) => {
+  if (shopifySyncRunning) return res.json({ error: 'Sync em lote ja em andamento' });
+  if (!blingAuth.isAuthenticated()) return res.json({ error: 'Bling nao autenticado. Acesse /auth/bling.' });
+  const b = req.body || {};
+  const opts = {
+    status: b.status || null,                       // null = segue o ativo da BW
+    update: !!b.update,                             // true = atualiza se ja existir
+    sleepMs: b.sleepMs || 450,                      // throttle entre produtos
+    pausaEntreLotesMs: b.pausaEntreLotesMs || 4000, // pausa entre paginas/lotes
+    reset: !!b.reset
+  };
+  shopifySyncRunning = true; shopifySyncPaused = false;
+  res.json({ status: 'started', opts });
+  runShopifySync(opts).catch(err => { logger.error(`Sync lote fatal: ${err.message}`); shopifySyncRunning = false; });
+});
+
+app.get('/api/shopify/sync-batch/status', (req, res) => {
+  res.json({ running: shopifySyncRunning, paused: shopifySyncPaused, progress: loadSyncProg() });
+});
+app.post('/api/shopify/sync-batch/pause', (req, res) => { shopifySyncPaused = true; res.json({ status: 'paused' }); });
+app.post('/api/shopify/sync-batch/resume', (req, res) => { shopifySyncPaused = false; res.json({ status: 'resumed' }); });
+app.post('/api/shopify/sync-batch/stop', (req, res) => { shopifySyncRunning = false; res.json({ status: 'stopping' }); });
+
 app.post('/api/import/start', async (req, res) => {
   if (importRunning) {
     return res.json({ error: 'Importacao ja em andamento' });
@@ -512,6 +539,87 @@ function sendBatch(type, rows) {
     progress.update({ stats: { sheetsSent: progress.load().stats.sheetsSent + rows.length } });
   } catch (err) {
     logger.error(`Falha ao gravar lote ${type}: ${err.message}`);
+  }
+}
+
+// ===================== SYNC EM LOTE: Bling -> Shopify =====================
+const fs = require('fs');
+const SYNC_PROG_PATH = path.join(__dirname, 'data', 'shopify-sync-progress.json');
+
+function loadSyncProg() {
+  try { return JSON.parse(fs.readFileSync(SYNC_PROG_PATH, 'utf8')); }
+  catch (e) { return { lastPage: 0, syncedIds: [], stats: { created: 0, skipped: 0, kit: 0, errors: 0 }, errors: [] }; }
+}
+function saveSyncProg(p) {
+  if (!fs.existsSync(path.dirname(SYNC_PROG_PATH))) fs.mkdirSync(path.dirname(SYNC_PROG_PATH), { recursive: true });
+  fs.writeFileSync(SYNC_PROG_PATH, JSON.stringify(p, null, 2));
+}
+
+async function runShopifySync(opts) {
+  // pausa a importacao UpSeller pra nao competir no rate limit do Bling
+  if (importRunning && !importPaused) { importPaused = true; logger.warning('Sync lote: importacao UpSeller PAUSADA p/ nao competir no Bling'); }
+
+  let sp = loadSyncProg();
+  if (opts.reset) { sp = { lastPage: 0, syncedIds: [], stats: { created: 0, skipped: 0, kit: 0, errors: 0 }, errors: [] }; saveSyncProg(sp); }
+  const synced = new Set(sp.syncedIds || []);
+  let page = sp.lastPage > 0 ? sp.lastPage : 1;
+
+  logger.info('=== INICIANDO SYNC EM LOTE Bling -> Shopify ===');
+  await shopifyProducts.loadBwIndex(); // indexa categorias da BW uma vez
+
+  let nesteRun = 0;
+  try {
+    while (shopifySyncRunning) {
+      while (shopifySyncPaused && shopifySyncRunning) await blingProducts.sleep(1000);
+      if (!shopifySyncRunning) break;
+
+      let products;
+      try { products = (await blingProducts.fetchProductsPage(page, 100)).data || []; }
+      catch (e) { if (e.response && e.response.status === 429) { logger.warning('Bling 429: aguardando 60s'); await blingProducts.sleep(60000); continue; } throw e; }
+      if (products.length === 0) { logger.success('Sync lote: fim do catalogo Bling'); break; }
+
+      logger.info(`Sync lote: pagina ${page} (${products.length} produtos)`);
+      for (const product of products) {
+        if (!shopifySyncRunning) break;
+        while (shopifySyncPaused && shopifySyncRunning) await blingProducts.sleep(1000);
+        if (synced.has(product.id)) continue;
+        try {
+          const details = await blingProducts.fetchProductDetails(product.id);
+          await blingProducts.sleep(300);
+          const codigoPai = details.codigoPai
+            || (details.estrutura && details.estrutura.pai && details.estrutura.pai.id)
+            || (details.variacao && details.variacao.produtoPai && details.variacao.produtoPai.id)
+            || product.idProdutoPai || null;
+          if (codigoPai) { synced.add(product.id); continue; } // variacao-filha: processada pelo pai
+          const processed = blingProducts.processProduct(product, details);
+          if (processed.kit) { sp.stats.kit = (sp.stats.kit || 0) + 1; synced.add(product.id); continue; }
+          const descricao = details.descricaoComplementar || details.descricaoCurta || details.descricao || '';
+          const r = await shopifyProducts.upsertProduct(processed, { descricao, status: opts.status, update: opts.update });
+          if (r.skipped) sp.stats.skipped++; else sp.stats.created++;
+          synced.add(product.id); nesteRun++;
+        } catch (e) {
+          sp.stats.errors++;
+          (sp.errors = sp.errors || []).push({ id: product.id, msg: e.message });
+          if (sp.errors.length > 200) sp.errors = sp.errors.slice(-200);
+          logger.error(`Sync lote erro produto ${product.id}: ${e.message}`);
+          if (e.response && e.response.status === 429) { logger.warning('Shopify 429: aguardando 15s'); await blingProducts.sleep(15000); }
+        }
+        sp.syncedIds = Array.from(synced);
+        saveSyncProg(sp);
+        await blingProducts.sleep(opts.sleepMs);
+      }
+      sp.lastPage = page; saveSyncProg(sp);
+      page++;
+      logger.info(`Sync lote: lote concluido. Pausa de ${opts.pausaEntreLotesMs}ms antes do proximo lote. (criados=${sp.stats.created} pulados=${sp.stats.skipped} erros=${sp.stats.errors})`);
+      await blingProducts.sleep(opts.pausaEntreLotesMs);
+    }
+  } catch (e) {
+    logger.error(`Sync lote fatal: ${e.message}`);
+  } finally {
+    shopifySyncRunning = false;
+    sp.syncedIds = Array.from(synced);
+    saveSyncProg(sp);
+    logger.success(`=== SYNC LOTE PARADO === neste run: ${nesteRun} | criados=${sp.stats.created} pulados=${sp.stats.skipped} kits=${sp.stats.kit} erros=${sp.stats.errors}`);
   }
 }
 
