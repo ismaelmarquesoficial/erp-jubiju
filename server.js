@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const blingAuth = require('./services/bling-auth');
+const shopifyAuth = require('./services/shopify-auth');
 const blingProducts = require('./services/bling-products');
 const googleWebhook = require('./services/google-webhook');
 const imageHandler = require('./services/image-handler');
@@ -45,6 +46,35 @@ app.get('/auth/bling/callback', async (req, res) => {
   } catch (err) {
     logger.error(`Erro ao obter tokens: ${err.message}`);
     res.status(500).send(`Erro ao obter tokens: ${err.message}`);
+  }
+});
+
+// ===================== ROTAS AUTH SHOPIFY =====================
+
+app.get('/auth/shopify', (req, res) => {
+  const cfg = shopifyAuth.getConfig();
+  const shop = String(req.query.shop || cfg.defaultShop || '').trim();
+  if (!shop) return res.status(400).send('Informe a loja: /auth/shopify?shop=suaLoja.myshopify.com');
+  if (!cfg.clientId || !cfg.appUrl) return res.status(500).send('Shopify nao configurado (SHOPIFY_CLIENT_ID / PUBLIC_BASE_URL).');
+  const { url, redirectUri } = shopifyAuth.getInstallUrl(shop);
+  logger.info(`Shopify: iniciando instalacao para ${shop} (callback ${redirectUri})`);
+  res.redirect(url);
+});
+
+app.get('/auth/shopify/callback', async (req, res) => {
+  const { shop, code } = req.query;
+  if (!shop || !code) return res.status(400).send('Callback Shopify sem shop/code');
+  if (!shopifyAuth.validHmac(req.query)) {
+    logger.error('Shopify callback: HMAC invalido');
+    return res.status(400).send('HMAC invalido');
+  }
+  try {
+    await shopifyAuth.exchangeCodeForToken(shop, code);
+    logger.success(`Shopify: app instalado em ${shop}, access_token salvo.`);
+    res.send('App Shopify instalado com sucesso! Pode fechar esta aba.');
+  } catch (err) {
+    logger.error(`Shopify: erro ao trocar code por token: ${err.message}`);
+    res.status(500).send('Erro ao obter token Shopify: ' + err.message);
   }
 });
 

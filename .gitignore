@@ -14,6 +14,8 @@ planilhas upseller/
 public/exports/
 secrets.local.json
 *.local.json
+.mcp.json
+monitor-import.js
 # excecao: os templates da UpSeller PRECISAM ir pro repo (o servidor usa para gerar)
 !templates/upseller/
 !templates/upseller/*.xlsx
