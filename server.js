@@ -3,6 +3,7 @@ const express = require('express');
 const path = require('path');
 const blingAuth = require('./services/bling-auth');
 const shopifyAuth = require('./services/shopify-auth');
+const shopifyProducts = require('./services/shopify-products');
 const blingProducts = require('./services/bling-products');
 const googleWebhook = require('./services/google-webhook');
 const imageHandler = require('./services/image-handler');
@@ -155,6 +156,33 @@ app.get('/api/debug/product', async (req, res) => {
     });
   } catch (err) {
     res.json({ error: err.message });
+  }
+});
+
+// ===================== SHOPIFY: SYNC DE PRODUTOS =====================
+
+// Valida a categoria de um SKU consultando a BW (SKU -> referencia -> hierarquia -> colecao)
+app.get('/api/shopify/category/:sku', async (req, res) => {
+  try {
+    const cat = await shopifyProducts.resolveCategoryBySku(req.params.sku);
+    res.json(cat);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Sincroniza UM produto do Bling para a Shopify (por id do Bling).
+// Body opcional: { update: true } para atualizar se ja existir; { status: 'draft' } para rascunho.
+app.post('/api/shopify/sync/:blingId', async (req, res) => {
+  try {
+    if (!blingAuth.isAuthenticated()) return res.json({ error: 'Bling nao autenticado. Acesse /auth/bling primeiro.' });
+    const details = await blingProducts.fetchProductDetails(req.params.blingId);
+    const processed = blingProducts.processProduct(details, details);
+    if (processed.kit) return res.json({ error: 'Produto e KIT - sync de kit ainda nao implementado', kit: processed.kit });
+    const descricao = details.descricaoComplementar || details.descricaoCurta || details.descricao || '';
+    const result = await shopifyProducts.upsertProduct(processed, Object.assign({ descricao }, req.body || {}));
+    res.json({ status: 'ok', result });
+  } catch (err) {
+    logger.error(`Sync Shopify falhou: ${err.message}`);
+    res.status(500).json({ error: err.message, detail: err.response && err.response.data });
   }
 });
 
