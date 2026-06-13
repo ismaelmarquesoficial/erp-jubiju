@@ -199,7 +199,8 @@ app.post('/api/shopify/sync-batch', (req, res) => {
     update: !!b.update,                             // true = atualiza se ja existir
     sleepMs: b.sleepMs || 600,                      // throttle entre produtos
     pausaEntreLotesMs: b.pausaEntreLotesMs || 5000, // pausa entre paginas/lotes
-    reset: !!b.reset
+    reset: !!b.reset,
+    rescan: !!b.rescan                              // re-varre todas as paginas (mantem syncedIds) p/ recuperar erros
   };
   shopifySyncRunning = true; shopifySyncPaused = false;
   res.json({ status: 'started', opts });
@@ -212,6 +213,18 @@ app.get('/api/shopify/sync-batch/status', (req, res) => {
 app.post('/api/shopify/sync-batch/pause', (req, res) => { shopifySyncPaused = true; res.json({ status: 'paused' }); });
 app.post('/api/shopify/sync-batch/resume', (req, res) => { shopifySyncPaused = false; res.json({ status: 'resumed' }); });
 app.post('/api/shopify/sync-batch/stop', (req, res) => { shopifySyncRunning = false; res.json({ status: 'stopping' }); });
+
+// ===== BACKFILL bling_sku + AUDITORIA (Bling x Shopify), produto a produto =====
+let auditRunning = false;
+app.post('/api/shopify/backfill-audit', (req, res) => {
+  if (auditRunning) return res.json({ error: 'Auditoria ja em andamento' });
+  if (!blingAuth.isAuthenticated()) return res.json({ error: 'Bling nao autenticado.' });
+  auditRunning = true;
+  res.json({ status: 'started', opts: req.body || {} });
+  runBackfillAudit(req.body || {}).catch(err => { logger.error(`Auditoria fatal: ${err.message}`); auditRunning = false; });
+});
+app.get('/api/shopify/backfill-audit/status', (req, res) => { res.json({ running: auditRunning, report: loadAuditRep() }); });
+app.post('/api/shopify/backfill-audit/stop', (req, res) => { auditRunning = false; res.json({ status: 'stopping' }); });
 
 app.post('/api/import/start', async (req, res) => {
   if (importRunning) {
@@ -632,6 +645,68 @@ async function runShopifySync(opts) {
     sp.syncedIds = Array.from(synced);
     saveSyncProg(sp);
     logger.success(`=== SYNC LOTE PARADO === neste run: ${nesteRun} | criados=${sp.stats.created} pulados=${sp.stats.skipped} kits=${sp.stats.kit} erros=${sp.stats.errors}`);
+  }
+}
+
+// ===================== BACKFILL + AUDITORIA =====================
+const AUDIT_PATH = path.join(__dirname, 'data', 'audit-report.json');
+function freshAudit() { return { lastPage: 0, seen: [], checked: 0, found: 0, missing: 0, catFix: 0, problemas: { categoria: [], variantes: [], semImagem: [], semFiscal: [] }, missingList: [] }; }
+function loadAuditRep() { try { return JSON.parse(fs.readFileSync(AUDIT_PATH, 'utf8')); } catch (e) { return freshAudit(); } }
+function saveAuditRep(r) { if (!fs.existsSync(path.dirname(AUDIT_PATH))) fs.mkdirSync(path.dirname(AUDIT_PATH), { recursive: true }); fs.writeFileSync(AUDIT_PATH, JSON.stringify(r, null, 2)); }
+
+async function runBackfillAudit(opts) {
+  if (importRunning && !importPaused) { importPaused = true; logger.warning('Auditoria: importacao UpSeller pausada'); }
+  await shopifyProducts.loadBwIndex();
+  let r = loadAuditRep();
+  if (opts.reset) { r = freshAudit(); saveAuditRep(r); }
+  const seen = new Set(r.seen || []);
+  let page = r.lastPage > 0 ? r.lastPage : 1;
+  logger.info('=== INICIANDO BACKFILL bling_sku + AUDITORIA Bling x Shopify ===');
+  try {
+    while (auditRunning) {
+      let products;
+      try { products = (await blingProducts.fetchProductsPage(page, 100)).data || []; }
+      catch (e) { if (e.response && e.response.status === 429) { logger.warning('Bling 429: 60s'); await blingProducts.sleep(60000); continue; } throw e; }
+      if (!products.length) { logger.success('Auditoria: fim do catalogo Bling'); break; }
+      logger.info(`Auditoria: pagina ${page} (${products.length})`);
+      for (const product of products) {
+        if (!auditRunning) break;
+        if (seen.has(product.id)) continue;
+        try {
+          const details = await blingProducts.fetchProductDetails(product.id);
+          await blingProducts.sleep(250);
+          const codigoPai = details.codigoPai
+            || (details.estrutura && details.estrutura.pai && details.estrutura.pai.id)
+            || (details.variacao && details.variacao.produtoPai && details.variacao.produtoPai.id)
+            || product.idProdutoPai || null;
+          if (codigoPai) { seen.add(product.id); continue; }
+          const processed = blingProducts.processProduct(product, details);
+          if (processed.kit) { seen.add(product.id); continue; }
+          const a = await shopifyProducts.tagAndAudit(processed);
+          if (a) {
+            r.checked++;
+            if (!a.found) { r.missing++; if (r.missingList.length < 500) r.missingList.push(a.sku); }
+            else {
+              r.found++;
+              if (!a.catOk) { r.catFix++; if (r.problemas.categoria.length < 200) r.problemas.categoria.push(`${a.sku}: BW="${a.cat}" antes="${a.catBefore}"`); }
+              if (!a.varOk && r.problemas.variantes.length < 200) r.problemas.variantes.push(`${a.sku}: esperado ${a.expVar} got ${a.gotVar}`);
+              if (!a.imgOk && r.problemas.semImagem.length < 300) r.problemas.semImagem.push(a.sku);
+              if (!a.fiscalOk && r.problemas.semFiscal.length < 500) r.problemas.semFiscal.push(a.sku);
+            }
+          }
+          seen.add(product.id);
+        } catch (e) { logger.error(`Auditoria erro ${product.id}: ${e.message}`); }
+        r.seen = Array.from(seen);
+        if (r.checked % 25 === 0) saveAuditRep(r);
+        await blingProducts.sleep(opts.sleepMs || 500);
+      }
+      r.lastPage = page; saveAuditRep(r); page++;
+      await blingProducts.sleep(opts.pausaEntreLotesMs || 3000);
+    }
+  } catch (e) { logger.error(`Auditoria fatal: ${e.message}`); }
+  finally {
+    auditRunning = false; r.seen = Array.from(seen); r.finishedAt = new Date().toISOString(); saveAuditRep(r);
+    logger.success(`=== AUDITORIA PARADA === checados=${r.checked} achados=${r.found} faltando=${r.missing} catCorrigidas=${r.catFix} | semImg=${r.problemas.semImagem.length} semFiscal=${r.problemas.semFiscal.length} varDiverg=${r.problemas.variantes.length}`);
   }
 }
 

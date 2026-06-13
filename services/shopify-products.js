@@ -91,7 +91,7 @@ async function resolveCategoryBySku(sku) {
   const idx = await loadBwIndex();
   const rec = idx[String(sku).trim()];
   if (!rec) return { nome: null, handle: null, collectionId: null, matched: false, ativo: null };
-  const nome = rec.categoria;
+  const nome = (rec.categoria || '').trim() || null;
   if (!nome) return { nome: null, handle: null, collectionId: null, matched: true, bwId: rec.bwId, ativo: rec.ativo };
   const handle = slug(nome);
   const cols = await loadCollections();
@@ -186,7 +186,7 @@ async function upsertProduct(processed, opts = {}) {
       options: optionNames.map(name => ({ name })),
       variants,
       images,
-      metafields: buildMetafields(base)
+      metafields: buildMetafields(base, sku)
     }
   };
 
@@ -221,8 +221,9 @@ function toNum(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 
 // Gera os metafields com as caracteristicas BR que a Shopify nao tem nativas:
 // fiscal (NCM/CEST/origem/unidade) e dimensoes (comprimento/largura/altura/peso).
-function buildMetafields(base) {
+function buildMetafields(base, blingSku) {
   const mf = [];
+  if (blingSku) mf.push({ namespace: 'bling', key: 'sku', type: 'single_line_text_field', value: String(blingSku) });
   const txt = (ns, key, val) => { const s = (val == null ? '' : String(val)).trim(); if (s) mf.push({ namespace: ns, key, type: 'single_line_text_field', value: s }); };
   const dec = (ns, key, val) => { const n = toNum(val); if (n > 0) mf.push({ namespace: ns, key, type: 'number_decimal', value: String(n) }); };
   const int = (ns, key, val) => { const n = toInt(val); if (n > 0) mf.push({ namespace: ns, key, type: 'number_integer', value: String(n) }); };
@@ -248,4 +249,43 @@ async function rehostImages(urls, sku, titulo, rehost) {
   } catch (e) { logger.warning(`Re-host de imagem falhou (${sku}): ${e.message}`); return urls; }
 }
 
-module.exports = { getToken, resolveCategoryBySku, findProductBySku, upsertProduct, loadCollections, loadBwIndex };
+// Busca o produto na Shopify (por SKU de variante) com os campos da auditoria
+async function findProductFull(sku) {
+  if (!sku) return null;
+  const data = await gql(
+    `query($q:String!){ productVariants(first:1, query:$q){ nodes{ product{ id legacyResourceId title productType status featuredImage{id} variantsCount{count} blingsku:metafield(namespace:"bling",key:"sku"){value} ncm:metafield(namespace:"fiscal",key:"ncm"){value} } } } }`,
+    { q: `sku:${JSON.stringify(sku)}` }
+  );
+  const n = data.productVariants.nodes[0];
+  return n ? n.product : null;
+}
+
+// Backfill do metafield bling.sku + correcao do product_type (trim) + auditoria do produto
+async function tagAndAudit(processed) {
+  const isVar = processed.variations && processed.variations.length > 0;
+  const base = isVar ? processed.variations[0] : processed.simple;
+  if (!base) return null;
+  const sku = base.spu || base.sku;
+  const categoria = await resolveCategoryBySku(sku);
+  const prod = await findProductFull(base.sku);
+  if (!prod) return { sku, found: false };
+  if (!prod.blingsku || prod.blingsku.value !== String(sku)) {
+    await gql(`mutation($mfs:[MetafieldsSetInput!]!){ metafieldsSet(metafields:$mfs){ userErrors{message} } }`,
+      { mfs: [{ ownerId: prod.id, namespace: 'bling', key: 'sku', type: 'single_line_text_field', value: String(sku) }] });
+  }
+  if (categoria.nome && prod.productType !== categoria.nome) {
+    await gql(`mutation($id:ID!,$t:String!){ productUpdate(input:{id:$id, productType:$t}){ userErrors{ message } } }`,
+      { id: prod.id, t: categoria.nome });
+  }
+  const expVar = isVar ? processed.variations.length : 1;
+  return {
+    sku, found: true,
+    catOk: !categoria.nome || prod.productType === categoria.nome,
+    cat: categoria.nome, catBefore: prod.productType,
+    varOk: prod.variantsCount.count === expVar, expVar, gotVar: prod.variantsCount.count,
+    imgOk: !!prod.featuredImage,
+    fiscalOk: !!(prod.ncm && prod.ncm.value)
+  };
+}
+
+module.exports = { getToken, resolveCategoryBySku, findProductBySku, findProductFull, tagAndAudit, upsertProduct, loadCollections, loadBwIndex };
