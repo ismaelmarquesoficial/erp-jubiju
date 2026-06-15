@@ -8,6 +8,7 @@ const blingProducts = require('./services/bling-products');
 const googleWebhook = require('./services/google-webhook');
 const imageHandler = require('./services/image-handler');
 const upsellerXlsx = require('./services/upseller-xlsx');
+const estoqueAudit = require('./services/estoque-audit');
 const logger = require('./utils/logger');
 const progress = require('./utils/progress');
 const rowstore = require('./utils/rowstore');
@@ -225,6 +226,14 @@ app.post('/api/shopify/backfill-audit', (req, res) => {
 });
 app.get('/api/shopify/backfill-audit/status', (req, res) => { res.json({ running: auditRunning, report: loadAuditRep() }); });
 app.post('/api/shopify/backfill-audit/stop', (req, res) => { auditRunning = false; res.json({ status: 'stopping' }); });
+
+// ===== AUDITORIA DE ESTOQUE: BW(ativo) x Shopify x Bling(saldo real) =====
+app.post('/api/audit/estoque', (req, res) => {
+  if (!blingAuth.isAuthenticated()) return res.json({ error: 'Bling nao autenticado. Acesse /auth/bling.' });
+  res.json(estoqueAudit.start());
+});
+app.get('/api/audit/estoque/status', (req, res) => res.json(estoqueAudit.status()));
+app.post('/api/audit/estoque/stop', (req, res) => res.json(estoqueAudit.stop()));
 
 app.post('/api/import/start', async (req, res) => {
   if (importRunning) {
