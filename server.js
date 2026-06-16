@@ -10,6 +10,7 @@ const imageHandler = require('./services/image-handler');
 const upsellerXlsx = require('./services/upseller-xlsx');
 const estoqueAudit = require('./services/estoque-audit');
 const faltantesSync = require('./services/faltantes-sync');
+const estoqueFix = require('./services/estoque-fix');
 const logger = require('./utils/logger');
 const progress = require('./utils/progress');
 const rowstore = require('./utils/rowstore');
@@ -244,6 +245,12 @@ app.post('/api/shopify/sync-faltantes', (req, res) => {
 });
 app.get('/api/shopify/sync-faltantes/status', (req, res) => res.json(faltantesSync.status()));
 app.post('/api/shopify/sync-faltantes/stop', (req, res) => res.json(faltantesSync.stop()));
+
+// ===== CORRIGIR ESTOQUE: ajusta o 'available' na Shopify para itens [{sku,qty}] (qty = saldo Bling) =====
+// Body: { dryRun (default true), sleepMs, itens:[{sku,qty}] }. Atualiza so o inventario, nao o produto.
+app.post('/api/shopify/fix-estoque', (req, res) => res.json(estoqueFix.start(req.body || {})));
+app.get('/api/shopify/fix-estoque/status', (req, res) => res.json(estoqueFix.status()));
+app.post('/api/shopify/fix-estoque/stop', (req, res) => res.json(estoqueFix.stop()));
 
 app.post('/api/import/start', async (req, res) => {
   if (importRunning) {

@@ -288,4 +288,47 @@ async function tagAndAudit(processed) {
   };
 }
 
-module.exports = { getToken, resolveCategoryBySku, findProductBySku, findProductFull, tagAndAudit, upsertProduct, loadCollections, loadBwIndex };
+// ===================== Inventario: setar quantidade disponivel (available) por SKU =====================
+let _locId = null;
+// Location principal (a que envia estoque). Cacheada.
+async function getPrimaryLocationId() {
+  if (_locId) return _locId;
+  const d = await gql(`{ locations(first:10){ nodes{ id isActive shipsInventory } } }`);
+  const n = d.locations.nodes || [];
+  const pick = n.find(l => l.isActive && l.shipsInventory) || n.find(l => l.isActive) || n[0];
+  _locId = pick ? pick.id : null;
+  return _locId;
+}
+
+// Le o estoque atual (available) de uma variante por SKU. null = SKU nao achado na Shopify.
+async function getInventoryBySku(sku) {
+  if (!sku) return null;
+  const d = await gql(
+    `query($q:String!){ productVariants(first:1, query:$q){ nodes{ id inventoryItem{ id inventoryLevels(first:10){ nodes{ location{ id } quantities(names:["available"]){ quantity } } } } } } }`,
+    { q: `sku:${JSON.stringify(sku)}` }
+  );
+  const v = d.productVariants.nodes[0];
+  if (!v) return null;
+  const lvls = (v.inventoryItem.inventoryLevels.nodes) || [];
+  const loc = await getPrimaryLocationId();
+  const lvl = lvls.find(l => l.location.id === loc) || lvls[0];
+  const available = (lvl && lvl.quantities[0]) ? lvl.quantities[0].quantity : null;
+  return { variantId: v.id, inventoryItemId: v.inventoryItem.id, locationId: lvl ? lvl.location.id : loc, available };
+}
+
+// Seta a quantidade 'available' de uma variante por SKU na location dela. Retorna { found, antes, depois }.
+async function setInventoryAvailableBySku(sku, qty) {
+  const cur = await getInventoryBySku(sku);
+  if (!cur || !cur.locationId) return { sku, found: false };
+  const q = Math.max(0, parseInt(qty) || 0);
+  const d = await gql(
+    `mutation($input:InventorySetQuantitiesInput!){ inventorySetQuantities(input:$input){ userErrors{ field message } } }`,
+    { input: { name: 'available', reason: 'correction', ignoreCompareQuantity: true,
+      quantities: [{ inventoryItemId: cur.inventoryItemId, locationId: cur.locationId, quantity: q }] } }
+  );
+  const errs = d.inventorySetQuantities.userErrors;
+  if (errs && errs.length) throw new Error(errs.map(e => e.message).join('; '));
+  return { sku, found: true, antes: cur.available, depois: q };
+}
+
+module.exports = { getToken, resolveCategoryBySku, findProductBySku, findProductFull, tagAndAudit, upsertProduct, loadCollections, loadBwIndex, getPrimaryLocationId, getInventoryBySku, setInventoryAvailableBySku };
