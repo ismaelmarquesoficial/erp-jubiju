@@ -26,6 +26,22 @@ async function fetchProductsPage(page = 1, limit = 100) {
   return data;
 }
 
+// Lista TODOS os codigos do Bling via paginacao da lista (sem detalhes -> rapido).
+// Retorna [{ c: codigo, id, pai: idProdutoPai|null }]. Inclui variacoes-filhas (elas aparecem na lista).
+async function fetchAllCodigos() {
+  const out = [];
+  let page = 1;
+  while (true) {
+    const data = await apiGet('/produtos', { pagina: page, limite: 100 });
+    const arr = data.data || [];
+    if (!arr.length) break;
+    for (const p of arr) out.push({ c: p.codigo, id: p.id, pai: p.idProdutoPai || null });
+    page++;
+    await sleep(300);
+  }
+  return out;
+}
+
 // Busca produto(s) no Bling pelo codigo exato (SKU). Retorna array de itens da lista (com .id).
 async function fetchByCodigo(codigo) {
   const data = await apiGet('/produtos', { codigo: String(codigo || '').trim(), limite: 10 });
@@ -638,6 +654,7 @@ function logKitDebug(d) {
 
 module.exports = {
   fetchProductsPage,
+  fetchAllCodigos,
   fetchByCodigo,
   fetchProductDetails,
   fetchProductStock,

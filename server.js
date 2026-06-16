@@ -128,6 +128,15 @@ app.get('/api/debug/product/:id', async (req, res) => {
   }
 });
 
+// Lista todos os codigos do Bling (pais + variacoes), via lista paginada (rapido, sem detalhes).
+app.get('/api/bling/codigos', async (req, res) => {
+  try {
+    if (!blingAuth.isAuthenticated()) return res.json({ error: 'Bling nao autenticado. Acesse /auth/bling.' });
+    const itens = await blingProducts.fetchAllCodigos();
+    res.json({ total: itens.length, itens });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Debug: ver estrutura real de um produto do Bling
 app.get('/api/debug/product', async (req, res) => {
   try {
