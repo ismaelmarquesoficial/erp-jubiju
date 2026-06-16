@@ -26,6 +26,12 @@ async function fetchProductsPage(page = 1, limit = 100) {
   return data;
 }
 
+// Busca produto(s) no Bling pelo codigo exato (SKU). Retorna array de itens da lista (com .id).
+async function fetchByCodigo(codigo) {
+  const data = await apiGet('/produtos', { codigo: String(codigo || '').trim(), limite: 10 });
+  return data.data || [];
+}
+
 // Busca detalhes de um produto especifico
 async function fetchProductDetails(productId) {
   const data = await apiGet(`/produtos/${productId}`);
@@ -632,6 +638,7 @@ function logKitDebug(d) {
 
 module.exports = {
   fetchProductsPage,
+  fetchByCodigo,
   fetchProductDetails,
   fetchProductStock,
   fetchAllProducts,
