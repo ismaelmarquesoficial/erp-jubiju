@@ -2,6 +2,7 @@
 // Cria/atualiza produtos na Shopify a partir do produto processado do Bling,
 // validando a CATEGORIA na BW (SKU Bling -> referencia BW -> hierarquia -> colecao Shopify).
 const axios = require('axios');
+const crypto = require('crypto');
 const logger = require('../utils/logger');
 const imageHandler = require('./image-handler');
 
@@ -321,11 +322,12 @@ async function setInventoryAvailableBySku(sku, qty) {
   const cur = await getInventoryBySku(sku);
   if (!cur || !cur.locationId) return { sku, found: false };
   const q = Math.max(0, parseInt(qty) || 0);
-  // changeFromQuantity (obrigatorio na API) = valor atual lido -> compare-and-swap: aborta se mudou no meio-tempo.
+  // changeFromQuantity (obrigatorio) = valor atual lido (compare-and-swap). @idempotent (obrigatorio na API 2026-04) com key unica.
   const d = await gql(
-    `mutation($input:InventorySetQuantitiesInput!){ inventorySetQuantities(input:$input){ userErrors{ field message } } }`,
+    `mutation($input:InventorySetQuantitiesInput!, $key:String!){ inventorySetQuantities(input:$input) @idempotent(key:$key){ userErrors{ field message } } }`,
     { input: { name: 'available', reason: 'correction',
-      quantities: [{ inventoryItemId: cur.inventoryItemId, locationId: cur.locationId, quantity: q, changeFromQuantity: (cur.available == null ? 0 : cur.available) }] } }
+      quantities: [{ inventoryItemId: cur.inventoryItemId, locationId: cur.locationId, quantity: q, changeFromQuantity: (cur.available == null ? 0 : cur.available) }] },
+      key: crypto.randomUUID() }
   );
   const errs = d.inventorySetQuantities.userErrors;
   if (errs && errs.length) throw new Error(errs.map(e => e.message).join('; '));
