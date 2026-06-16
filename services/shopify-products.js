@@ -321,11 +321,11 @@ async function setInventoryAvailableBySku(sku, qty) {
   const cur = await getInventoryBySku(sku);
   if (!cur || !cur.locationId) return { sku, found: false };
   const q = Math.max(0, parseInt(qty) || 0);
-  // Set direto do 'available' (sem compare-and-swap: o campo de comparacao e opcional na API).
+  // changeFromQuantity (obrigatorio na API) = valor atual lido -> compare-and-swap: aborta se mudou no meio-tempo.
   const d = await gql(
     `mutation($input:InventorySetQuantitiesInput!){ inventorySetQuantities(input:$input){ userErrors{ field message } } }`,
     { input: { name: 'available', reason: 'correction',
-      quantities: [{ inventoryItemId: cur.inventoryItemId, locationId: cur.locationId, quantity: q }] } }
+      quantities: [{ inventoryItemId: cur.inventoryItemId, locationId: cur.locationId, quantity: q, changeFromQuantity: (cur.available == null ? 0 : cur.available) }] } }
   );
   const errs = d.inventorySetQuantities.userErrors;
   if (errs && errs.length) throw new Error(errs.map(e => e.message).join('; '));
